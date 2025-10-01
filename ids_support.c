@@ -29,6 +29,7 @@ static void ids_print_alert_rec(alert_t *rec);  /* print one record */
 int ids_compare_genid(const alert_t *rec_a, const alert_t *rec_b)
 {
     assert(rec_a && rec_b);
+    /* Return 1 if a comes before b (ascending order: smaller first) */
     if (rec_a->generator_id < rec_b->generator_id) return 1;
     if (rec_a->generator_id > rec_b->generator_id) return -1;
     return 0;
@@ -37,8 +38,9 @@ int ids_compare_genid(const alert_t *rec_a, const alert_t *rec_b)
 int ids_compare_destip(const alert_t *rec_a, const alert_t *rec_b)
 {
     assert(rec_a && rec_b);
-    if (rec_a->dest_ip_addr < rec_b->dest_ip_addr) return 1;
-    if (rec_a->dest_ip_addr > rec_b->dest_ip_addr) return -1;
+    /* Return 1 if a comes before b (descending order: larger first) */
+    if (rec_a->dest_ip_addr > rec_b->dest_ip_addr) return 1;
+    if (rec_a->dest_ip_addr < rec_b->dest_ip_addr) return -1;
     return 0;
 }
 
@@ -284,18 +286,18 @@ void ids_append_rear_fast(llist_t *list_ptr, int generator_id, int dest_ip_addr)
     rec->generator_id = generator_id;
     rec->dest_ip_addr = dest_ip_addr;
     llist_insert(list_ptr, rec, LLPOSITION_BACK);
-    /* No printing; matches generator’s expected quiet behavior. */
+    /* No printing; matches generator's expected quiet behavior. */
 }
 
 void ids_sort_gen(llist_t *list_ptr, int sort_type)
 {
-    /* Sort the list by generator id using the ADT’s sort */
+    /* Sort the list by generator id using the ADT's sort */
     llist_sort(list_ptr, sort_type, ids_compare_genid);
 }
 
 void ids_sort_ip(llist_t *list_ptr, int sort_type)
 {
-    /* Sort the list by destination IP using the ADT’s sort */
+    /* Sort the list by destination IP using the ADT's sort */
     llist_sort(list_ptr, sort_type, ids_compare_destip);
 }
 
