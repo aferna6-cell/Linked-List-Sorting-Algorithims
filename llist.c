@@ -23,15 +23,20 @@
 #define LLIST_UNSORTED  -898989
 
 /* ===== private helpers ===== */
-static int  comes_before(llist_t *L, const data_t *a, const data_t *b);
-
+static void init_empty_list(llist_t *L, int (*fcomp)(const data_t *, const data_t *), int sorted_state);
+static int comes_before(llist_t *L, const data_t *a, const data_t *b);
 static void detach_node(llist_t *L, llist_elem_t *node);
 static void push_back_node(llist_t *L, llist_elem_t *node);
 static llist_elem_t *pop_front_node(llist_t *L);
 
-static void selection_sort_iter(llist_t *work, llist_t *out);
+static void insertion_sort_list(llist_t *list_ptr);
+
+static void selection_sort_recursive(llist_t *list_ptr);
 static void selection_sort_recur(llist_t *work, llist_t *out);
 
+static void selection_sort_iterative(llist_t *list_ptr);
+
+static void mergesort_list(llist_t *list_ptr);
 static void split_in_half(llist_t *src, llist_t *left, llist_t *right);
 static void merge_into(llist_t *dst, llist_t *left, llist_t *right);
 
@@ -225,88 +230,204 @@ void llist_sort(llist_t *list_ptr, int sort_type,
     assert(list_ptr && fcomp);
     list_ptr->compare_fun = fcomp;
 
-    int n = llist_entries(list_ptr);
-    if (n <= 1) { list_ptr->ll_sorted_state = LLIST_SORTED; llist_debug_validate(list_ptr); return; }
+    int original_size = llist_entries(list_ptr);
+    if (original_size <= 1) {
+        list_ptr->ll_sorted_state = LLIST_SORTED;
+        llist_debug_validate(list_ptr);
+        return;
+    }
 
     switch (sort_type) {
-        case 1: { /* insertion into second sorted list */
-            llist_t *S = llist_construct(fcomp);
-            data_t *x;
-            while ((x = llist_remove(list_ptr, LLPOSITION_FRONT)) != NULL) {
-                llist_insert_sorted(S, x);
-            }
-            list_ptr->ll_front = S->ll_front;
-            list_ptr->ll_back  = S->ll_back;
-            list_ptr->ll_entry_count = S->ll_entry_count;
-            list_ptr->ll_sorted_state = LLIST_SORTED;
-            free(S);
+        case 1: /* insertion sort with second list */
+            insertion_sort_list(list_ptr);
             break;
-        }
-        case 2: { /* selection sort (recursive) */
-            llist_t *OUT = llist_construct(fcomp);
-            selection_sort_recur(list_ptr, OUT);
-            list_ptr->ll_front = OUT->ll_front;
-            list_ptr->ll_back = OUT->ll_back;
-            list_ptr->ll_entry_count = OUT->ll_entry_count;
-            list_ptr->ll_sorted_state = LLIST_SORTED;
-            free(OUT);
+        case 2: /* recursive selection sort */
+            selection_sort_recursive(list_ptr);
             break;
-        }
-        case 3: { /* selection sort (iterative) */
-            llist_t *OUT = llist_construct(fcomp);
-            selection_sort_iter(list_ptr, OUT);
-            list_ptr->ll_front = OUT->ll_front;
-            list_ptr->ll_back = OUT->ll_back;
-            list_ptr->ll_entry_count = OUT->ll_entry_count;
-            list_ptr->ll_sorted_state = LLIST_SORTED;
-            free(OUT);
+        case 3: /* iterative selection sort */
+            selection_sort_iterative(list_ptr);
             break;
-        }
-        case 4: { /* merge sort */
-            llist_t *L = llist_construct(fcomp);
-            llist_t *R = llist_construct(fcomp);
-            split_in_half(list_ptr, L, R);
-            if (L->ll_entry_count > 1)  llist_sort(L, 4, fcomp);
-            if (R->ll_entry_count > 1)  llist_sort(R, 4, fcomp);
-            merge_into(list_ptr, L, R);
-            list_ptr->ll_sorted_state = LLIST_SORTED;
-            free(L); free(R);
+        case 4: /* merge sort */
+            mergesort_list(list_ptr);
             break;
-        }
         case 5: { /* quick sort via qsort_r on array copy */
-            int m = llist_entries(list_ptr);
-            data_t **A = (data_t **) malloc(sizeof(data_t *) * m);
-            assert(A);
-            for (int i = 0; i < m; i++) A[i] = llist_remove(list_ptr, LLPOSITION_FRONT);
-            qsort_r(A, m, sizeof(data_t *), qsort_compare, list_ptr);
-            for (int i = 0; i < m; i++) llist_insert(list_ptr, A[i], LLPOSITION_BACK);
-            free(A);
-            list_ptr->ll_sorted_state = LLIST_SORTED;
+            int Asize = llist_entries(list_ptr);
+            data_t **QsortA = (data_t **) malloc(Asize * sizeof(data_t *));
+            assert(QsortA);
+            for (int i = 0; i < Asize; i++) {
+                QsortA[i] = llist_remove(list_ptr, LLPOSITION_FRONT);
+            }
+            qsort_r(QsortA, Asize, sizeof(data_t *), qsort_compare, list_ptr);
+            for (int i = 0; i < Asize; i++) {
+                llist_insert(list_ptr, QsortA[i], LLPOSITION_BACK);
+            }
+            free(QsortA);
             break;
         }
         default:
-            list_ptr->ll_sorted_state = LLIST_SORTED;
             break;
     }
-    llist_debug_validate(list_ptr); /* no-op for speed */
+
+    assert(llist_entries(list_ptr) == original_size);
+    list_ptr->ll_sorted_state = LLIST_SORTED;
+    llist_debug_validate(list_ptr);
 }
 
 /* ===== helpers ===== */
 
+static void init_empty_list(llist_t *L, int (*fcomp)(const data_t *, const data_t *), int sorted_state)
+{
+    L->ll_front = NULL;
+    L->ll_back = NULL;
+    L->ll_entry_count = 0;
+    L->compare_fun = fcomp;
+    L->ll_sorted_state = sorted_state;
+}
+
 static int comes_before(llist_t *L, const data_t *a, const data_t *b)
 {
-    assert(L->compare_fun);
-    return (L->compare_fun(a, b) == 1);
+    return L->compare_fun(a, b) > 0;
 }
 
 static void detach_node(llist_t *L, llist_elem_t *node)
 {
-    if (node->ll_prev) node->ll_prev->ll_next = node->ll_next;
-    else               L->ll_front = node->ll_next;
-    if (node->ll_next) node->ll_next->ll_prev = node->ll_prev;
-    else               L->ll_back  = node->ll_prev;
+    assert(L && node && L->ll_entry_count > 0);
+
+    if (node->ll_prev) node->ll_prev->ll_next = node->ll_next; else L->ll_front = node->ll_next;
+    if (node->ll_next) node->ll_next->ll_prev = node->ll_prev; else L->ll_back = node->ll_prev;
+
     node->ll_prev = node->ll_next = NULL;
     L->ll_entry_count--;
+}
+
+/* ----- insertion sort using second list ----- */
+static void insertion_sort_list(llist_t *list_ptr)
+{
+    llist_t *sorted = llist_construct(list_ptr->compare_fun);
+    sorted->ll_sorted_state = LLIST_SORTED;
+
+    while (list_ptr->ll_entry_count > 0) {
+        data_t *moved = llist_remove(list_ptr, LLPOSITION_FRONT);
+        llist_insert_sorted(sorted, moved);
+    }
+
+    list_ptr->ll_front = sorted->ll_front;
+    list_ptr->ll_back = sorted->ll_back;
+    list_ptr->ll_entry_count = sorted->ll_entry_count;
+    free(sorted);
+}
+
+/* ----- recursive selection sort (Standish 5.19/5.20) ----- */
+static void selection_sort_recur(llist_t *work, llist_t *out)
+{
+    if (work->ll_entry_count == 0) return;
+
+    llist_elem_t *best = work->ll_front;
+    for (llist_elem_t *cur = work->ll_front; cur; cur = cur->ll_next) {
+        if (comes_before(work, cur->data_ptr, best->data_ptr)) {
+            best = cur;
+        }
+    }
+
+    detach_node(work, best);
+    push_back_node(out, best);
+    selection_sort_recur(work, out);
+}
+
+static void selection_sort_recursive(llist_t *list_ptr)
+{
+    llist_t *out = llist_construct(list_ptr->compare_fun);
+    init_empty_list(out, list_ptr->compare_fun, LLIST_UNSORTED);
+    selection_sort_recur(list_ptr, out);
+
+    list_ptr->ll_front = out->ll_front;
+    list_ptr->ll_back = out->ll_back;
+    list_ptr->ll_entry_count = out->ll_entry_count;
+    free(out);
+}
+
+/* ----- iterative selection sort (Standish 5.35) ----- */
+static void selection_sort_iterative(llist_t *list_ptr)
+{
+    llist_t *out = llist_construct(list_ptr->compare_fun);
+    init_empty_list(out, list_ptr->compare_fun, LLIST_UNSORTED);
+
+    while (list_ptr->ll_entry_count > 0) {
+        llist_elem_t *best = list_ptr->ll_front;
+        for (llist_elem_t *cur = list_ptr->ll_front; cur; cur = cur->ll_next) {
+            if (comes_before(list_ptr, cur->data_ptr, best->data_ptr)) {
+                best = cur;
+            }
+        }
+        detach_node(list_ptr, best);
+        push_back_node(out, best);
+    }
+
+    list_ptr->ll_front = out->ll_front;
+    list_ptr->ll_back = out->ll_back;
+    list_ptr->ll_entry_count = out->ll_entry_count;
+    free(out);
+}
+
+/* ----- merge sort (Standish 6.19) ----- */
+static void mergesort_list(llist_t *list_ptr)
+{
+    if (list_ptr->ll_entry_count <= 1) return;
+
+    llist_t left, right;
+    init_empty_list(&left, list_ptr->compare_fun, LLIST_UNSORTED);
+    init_empty_list(&right, list_ptr->compare_fun, LLIST_UNSORTED);
+
+    split_in_half(list_ptr, &left, &right);
+    if (left.ll_entry_count > 1) mergesort_list(&left);
+    if (right.ll_entry_count > 1) mergesort_list(&right);
+    merge_into(list_ptr, &left, &right);
+}
+
+static void split_in_half(llist_t *src, llist_t *left, llist_t *right)
+{
+    int left_count = src->ll_entry_count / 2;
+    int right_count = src->ll_entry_count - left_count;
+
+    llist_elem_t *left_tail = src->ll_front;
+    for (int i = 1; i < left_count; i++) {
+        left_tail = left_tail->ll_next;
+    }
+
+    llist_elem_t *right_head = left_tail->ll_next;
+    if (right_head) right_head->ll_prev = NULL;
+    left_tail->ll_next = NULL;
+
+    left->ll_front = src->ll_front;
+    left->ll_back = left_tail;
+    left->ll_entry_count = left_count;
+
+    right->ll_front = right_head;
+    right->ll_back = src->ll_back;
+    right->ll_entry_count = right_count;
+
+    src->ll_front = src->ll_back = NULL;
+    src->ll_entry_count = 0;
+}
+
+static void merge_into(llist_t *dst, llist_t *left, llist_t *right)
+{
+    init_empty_list(dst, left->compare_fun, LLIST_UNSORTED);
+
+    while (left->ll_entry_count > 0 && right->ll_entry_count > 0) {
+        if (comes_before(left, left->ll_front->data_ptr, right->ll_front->data_ptr)) {
+            push_back_node(dst, pop_front_node(left));
+        } else {
+            push_back_node(dst, pop_front_node(right));
+        }
+    }
+
+    while (left->ll_entry_count > 0) {
+        push_back_node(dst, pop_front_node(left));
+    }
+    while (right->ll_entry_count > 0) {
+        push_back_node(dst, pop_front_node(right));
+    }
 }
 
 static void push_back_node(llist_t *L, llist_elem_t *node)
@@ -329,51 +450,14 @@ static llist_elem_t *pop_front_node(llist_t *L)
     return node;
 }
 
-static void selection_sort_iter(llist_t *work, llist_t *out)
-{
-    while (work->ll_entry_count > 0) {
-        llist_elem_t *best = work->ll_front;
-        for (llist_elem_t *r = best->ll_next; r; r = r->ll_next)
-            if (comes_before(out, r->data_ptr, best->data_ptr)) best = r;
-        detach_node(work, best);
-        push_back_node(out, best);
-    }
-}
-
-static void selection_sort_recur(llist_t *work, llist_t *out)
-{
-    if (work->ll_entry_count == 0) return;
-    llist_elem_t *best = work->ll_front;
-    for (llist_elem_t *r = best->ll_next; r; r = r->ll_next)
-        if (comes_before(out, r->data_ptr, best->data_ptr)) best = r;
-    detach_node(work, best);
-    push_back_node(out, best);
-    selection_sort_recur(work, out);
-}
-
-static void split_in_half(llist_t *src, llist_t *left, llist_t *right)
-{
-    int n = src->ll_entry_count, half = n/2;
-    for (int i = 0; i < half; i++)  push_back_node(left,  pop_front_node(src));
-    while (src->ll_entry_count)     push_back_node(right, pop_front_node(src));
-}
-
-static void merge_into(llist_t *dst, llist_t *left, llist_t *right)
-{
-    while (left->ll_entry_count && right->ll_entry_count) {
-        data_t *a = left->ll_front->data_ptr;
-        data_t *b = right->ll_front->data_ptr;
-        if (comes_before(dst, a, b)) push_back_node(dst, pop_front_node(left));
-        else                         push_back_node(dst, pop_front_node(right));
-    }
-    while (left->ll_entry_count)  push_back_node(dst, pop_front_node(left));
-    while (right->ll_entry_count) push_back_node(dst, pop_front_node(right));
-}
-
+/* ----- quick sort comparison helper ----- */
 static int qsort_compare(const void *p_a, const void *p_b, void * lptr)
 {
-    llist_t *L = (llist_t *) lptr;
-    return L->compare_fun(*(data_t * const *)p_b, *(data_t * const *)p_a);
+    llist_t *list_ptr = (llist_t *) lptr;
+    int cmp = list_ptr->compare_fun(*(data_t * const *)p_a, *(data_t * const *)p_b);
+    if (cmp > 0) return -1;  /* a should come before b */
+    if (cmp < 0) return 1;   /* a should come after b  */
+    return 0;
 }
 
 /* ===== debug validator (no-op for speed) ===== */
