@@ -454,7 +454,10 @@ static llist_elem_t *pop_front_node(llist_t *L)
 static int qsort_compare(const void *p_a, const void *p_b, void * lptr)
 {
     llist_t *list_ptr = (llist_t *) lptr;
-    return list_ptr->compare_fun(*(data_t * const *)p_a, *(data_t * const *)p_b);
+    int cmp = list_ptr->compare_fun(*(data_t * const *)p_a, *(data_t * const *)p_b);
+    if (cmp > 0) return -1;  /* a should come before b */
+    if (cmp < 0) return 1;   /* a should come after b  */
+    return 0;
 }
 
 /* ===== debug validator (no-op for speed) ===== */
